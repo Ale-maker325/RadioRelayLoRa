@@ -1,0 +1,17 @@
+# Временные файлы компиляции PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Настройки VS Code (их не стоит заливать, так как у другого человека могут быть свои пути)
+.vscode/
+!.vscode/extensions.json
+
+# Файлы логов и кэша
+*.log
+.gcc-flags.json
+.clang-format
+
+# Системные файлы
+.DS_Store
+Thumbs.db
