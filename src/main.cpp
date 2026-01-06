@@ -10,9 +10,9 @@
 
 // ОПРЕДЕЛЯЕМ RADIO_NAME: берем из настроек, чтобы логгер знал, кто пишет (TX или RX)
 #ifdef TRANSMITTER
-  String RADIO_NAME = F("TX");
+  String RADIO_NAME = "TX";
 #else
-  String RADIO_NAME = F("RX");
+  String RADIO_NAME = "RX";
 #endif
 
 
