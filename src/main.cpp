@@ -29,11 +29,6 @@
 
 void setup()
 {
-  #ifdef DEBUG_PRINT
-    Serial.begin(115200);
-    delay(500);
-  #endif
-    
   // 1. Инициализация вибромотора (только для TX)
   #if defined(TRANSMITTER) && defined(VIBRO_USED)
     pinMode(VIBRO_PIN, OUTPUT);
@@ -45,15 +40,30 @@ void setup()
   // 2. Инициализация реле (только для RX)
   #if defined(RECEIVER) && defined(RELAY_USED)
     pinMode(RELAY_PIN, OUTPUT);
-    digitalWrite(RELAY_PIN, LOW);
+    //У ESP32S3 логика реле реализована по-другому чем у ESP8266, - инвертирована
+    //Поэтому разлеляем на два варианта
+    #if defined(ARDUINO_ARCH_ESP32)
+      digitalWrite(RELAY_PIN, LOW);
+    #elif defined(ARDUINO_ARCH_ESP8266)
+      digitalWrite(RELAY_PIN, HIGH);
+    #endif
   #endif
+  
+  #ifdef DEBUG_PRINT
+    Serial.begin(115200);
+    delay(500);
+  #endif
+  
+  // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода
+  // поэтому этот участок только для ESP32
+  #if defined(ARDUINO_ARCH_ESP32)
+    // 3. Настройка светодиода (через библиотеку rgb_led.h)
+    WriteColorPixel(COLORS_RGB_LED::blue); // В состоянии режима ожидания синий цвет
 
-  // 3. Настройка светодиода (через библиотеку rgb_led.h)
-  WriteColorPixel(COLORS_RGB_LED::blue); // В состоянии режима ожидания синий цвет
-
-  // 4. Инициализация дисплея
-  #ifdef USE_DISPLAY
-    display_init();
+    // 4. Инициализация дисплея
+    #ifdef USE_DISPLAY
+      display_init();
+    #endif
   #endif
 
   // 5. Запуск радиомодема
@@ -78,8 +88,12 @@ void setup()
       // Модем автоматически уходит в режим прослушки в MyRadio.beginRadio()
     #endif
 
-    // Синий цвет — дежурный режим (система готова)
-    WriteColorPixel(COLORS_RGB_LED::blue);
+  // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
+  // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
+  #if defined(ARDUINO_ARCH_ESP32)
+      // Синий цвет — дежурный режим (система готова)
+      WriteColorPixel(COLORS_RGB_LED::blue);
+  #endif
 }
 
 
@@ -128,9 +142,17 @@ void loop()
             lastRelayTime = millis(); // Запоминаем время
             // Активация исполнительного устройства
             #ifdef RELAY_USED
-              digitalWrite(RELAY_PIN, HIGH);
-              delay(500); // Держим реле включенным полсекунды
-              digitalWrite(RELAY_PIN, LOW);
+              //У ESP32 логика работы пина реле инвертирована по отношению к ESP8266, поэтому изолируем
+              #if defined(ARDUINO_ARCH_ESP32)
+                digitalWrite(RELAY_PIN, HIGH); //включили
+                delay(500); // Держим реле включенным полсекунды
+                digitalWrite(RELAY_PIN, LOW); //выключили
+              #endif
+              #if defined(ARDUINO_ARCH_ESP8266)
+                digitalWrite(RELAY_PIN, LOW); //включили
+                delay(500); // Держим реле включенным полсекунды
+                digitalWrite(RELAY_PIN, HIGH); //выключили
+              #endif
             #endif
           }else{
             log_radio_event(0, "Action ignored (too fast)");
@@ -163,7 +185,11 @@ void handleTap(Button2& b)
   // Пытаемся отправить команду до 3-х раз
   for (int attempt = 1; attempt <= 3; attempt++)
   {
-    WriteColorPixel(COLORS_RGB_LED::red); // Красный при передаче
+    // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
+    // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
+    #if defined(ARDUINO_ARCH_ESP32)
+      WriteColorPixel(COLORS_RGB_LED::red); // Красный при передаче
+    #endif
     log_radio_event(0, "TX Attempt " + String(attempt));
 
     // Отправляем сигнал
@@ -201,7 +227,11 @@ void handleTap(Button2& b)
   if (success)
   {
     log_radio_event(0, "DONE! RX CONFIRMED");
-    WriteColorPixel(COLORS_RGB_LED::green); // Зеленый — успех
+    // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
+    // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
+    #if defined(ARDUINO_ARCH_ESP32)
+      WriteColorPixel(COLORS_RGB_LED::green); // Зеленый — успех
+    #endif
     #ifdef VIBRO_USED
       digitalWrite(VIBRO_PIN, HIGH);
       delay(1000);
@@ -211,12 +241,20 @@ void handleTap(Button2& b)
   else
   {
     log_radio_event(-1, "FAIL: NO RESPONSE");
-    WriteColorPixel(COLORS_RGB_LED::red); // Красный — ошибка связи
+    // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
+    // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
+    #if defined(ARDUINO_ARCH_ESP32)
+      WriteColorPixel(COLORS_RGB_LED::red); // Красный — ошибка связи
+    #endif
   }
 
   // Возвращаемся в дежурный режим через секунду
   delay(2000);
-  WriteColorPixel(COLORS_RGB_LED::blue);
+  // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
+  // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
+  #if defined(ARDUINO_ARCH_ESP32)
+    WriteColorPixel(COLORS_RGB_LED::blue);
+  #endif
   
   // Возвращаем радио в режим приема
   MyRadio.startListening();

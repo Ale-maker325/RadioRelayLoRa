@@ -52,8 +52,8 @@ void WriteColorPixel(COLORS_RGB_LED color)
     
     #elif defined(ARDUINO_ARCH_ESP8266)
         
-        // ЛОГИКА ДЛЯ ESP8266 (Обычный светодиод/Реле)
-        // Учитываем твою логику: HIGH - выкл, LOW - вкл (светодиод и реле)
+        // ЛОГИКА ДЛЯ ESP8266 (Обычный светодиод/Реле) логику обработки выставляем следующую:
+        // HIGH - выключено, LOW - включено (речь идёт о реле , светодид как-бы между прочим будет)
         if (color == COLORS_RGB_LED::black) {
             digitalWrite(LED_PIN, HIGH); // Выключено (подтянуто к плюсу)
         } else {
@@ -65,4 +65,4 @@ void WriteColorPixel(COLORS_RGB_LED color)
 }
 
 
-#endif;
+#endif

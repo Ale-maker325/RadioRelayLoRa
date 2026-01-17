@@ -149,9 +149,9 @@
   
   //Пины для подключения SPI модема используют стандартный для ESP8266
   //набор пинов: MOSI (GPIO 13) - D7 ,MISO (GPIO 12) - D6 ,SCK (GPIO 14) - D5
-  #define SCK_RADIO D5
-  #define MISO_RADIO D6
-  #define MOSI_RADIO D7
+  // #define SCK_RADIO D5
+  // #define MISO_RADIO D6
+  // #define MOSI_RADIO D7
 
 #endif
 
