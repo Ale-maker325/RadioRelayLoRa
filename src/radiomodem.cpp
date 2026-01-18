@@ -15,9 +15,14 @@
     #endif
 
     #ifdef RADIO_TYPE_SX1268
-        // BUSY_PIN используется для прерываний
-        // Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
+        // Для SX1268 ПРАВИЛЬНЫЙ порядок по RadioLib:
+        // 1. NSS_PIN (CS)
+        // 2. DIO1_PIN (IRQ) - Пин прерывания
+        // 3. NRST_PIN (Reset) - Пин сброса
+        // 4. BUSY_PIN (Busy) - Пин статуса
+        // 5. SPI_MODEM - экземпляр SPI
         Module mod(NSS_PIN, DIO1_PIN, NRST_PIN, BUSY_PIN, SPI_MODEM);
+        // Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
         SX1268 radio(&mod);
     #endif
 
