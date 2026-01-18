@@ -74,7 +74,11 @@ bool RadioManager::beginRadio() {
     // Сначала вызываем базовый begin БЕЗ параметров, чтобы просто "разбудить" чип
     // Но перед этим ОБЯЗАТЕЛЬНО настраиваем TCXO, так как без него он не ответит.
     #ifdef RADIO_TYPE_SX1268
-        radio.setTCXO(1.8);
+        // 3. ПЕРЕД .begin() настраиваем TCXO
+        // В Meshtastic используется 1.8V и задержка 1.6мс. 
+        // В RadioLib это делается так:
+        radio.setTCXO(1.8); 
+        
     #endif
 
     int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
