@@ -48,14 +48,19 @@ void IRAM_ATTR setFlag(void) {
  */
 RadioManager MyRadio;
 
+
+
 bool RadioManager::beginRadio() {
     #ifdef ARDUINO_ARCH_ESP32
-        //Инициализируем SPI ESP32
+        // 1. Инициализируем SPI
         SPI_MODEM.begin(SCK_RADIO, MISO_RADIO, MOSI_RADIO, NSS_PIN);
-        #ifdef RADIO_TYPE_SX1268
-            radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
-            radio.setTCXO(2.4);
-        #endif
+        
+        // 2. РУЧНОЙ СБРОС (Reset) - это "оживит" чип, если он завис в BUSY
+        pinMode(NRST_PIN, OUTPUT);
+        digitalWrite(NRST_PIN, LOW);
+        delay(20); 
+        digitalWrite(NRST_PIN, HIGH);
+        delay(50);
             
     #elif defined(ARDUINO_ARCH_ESP8266)
          // Инициализируем SPI ESP8266
@@ -63,16 +68,35 @@ bool RadioManager::beginRadio() {
     #endif
     
     // Настройка прерывания на DIO0
-    radio.setPacketReceivedAction(setFlag);
+    //radio.setPacketReceivedAction(setFlag);
+
+    // 3. ПРАВИЛЬНАЯ ИНИЦИАЛИЗАЦИЯ ДЛЯ SX1268 (E22)
+    // Сначала вызываем базовый begin БЕЗ параметров, чтобы просто "разбудить" чип
+    // Но перед этим ОБЯЗАТЕЛЬНО настраиваем TCXO, так как без него он не ответит.
+    #ifdef RADIO_TYPE_SX1268
+        radio.setTCXO(1.8);
+    #endif
 
     int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
                             config.codingRate, config.syncWord, config.outputPower, 
                             config.preambleLength, config.gain);
 
     if (state == RADIOLIB_ERR_NONE) {
+
+        // Только после успешного begin настраиваем обвязку:
+        // Настройка ключей антенны (Пины 1 и 2)
+        radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
+
+        // Настройка прерывания
+        radio.setPacketReceivedAction(setFlag);
+
+        // Дополнительные настройки из твоего рабочего лога Meshtastic
+        #ifdef RADIO_TYPE_SX1268
+            radio.setRxBoostedGainMode(RADIOLIB_SX126X_RX_GAIN_BOOSTED);
+        #endif
+        
         
         radio.setCurrentLimit(config.currentLimit);
-
         log_radio_event(state, "Radio Init Success");
         delay(500);
         startListening(); 
