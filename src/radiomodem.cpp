@@ -65,6 +65,7 @@ bool RadioManager::beginRadio() {
                             config.preambleLength, config.gain);
 
     if (state == RADIOLIB_ERR_NONE) {
+        
         radio.setCurrentLimit(config.currentLimit);
         log_radio_event(state, "Radio Init Success");
         startListening(); 
