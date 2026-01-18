@@ -16,7 +16,8 @@
 
     #ifdef RADIO_TYPE_SX1268
         // BUSY_PIN используется для прерываний
-        Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
+        // Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
+        Module mod(NSS_PIN, DIO1_PIN, NRST_PIN, BUSY_PIN, SPI_MODEM);
         SX1268 radio(&mod);
     #endif
 
@@ -78,7 +79,6 @@ bool RadioManager::beginRadio() {
         // В Meshtastic используется 1.8V и задержка 1.6мс. 
         // В RadioLib это делается так:
         radio.setTCXO(1.8); 
-        
     #endif
 
     int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
