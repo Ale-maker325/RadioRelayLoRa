@@ -4,18 +4,18 @@
 
 
 // Выбери один из вариантов твоего модема:
-#define RADIO_TYPE_SX1278   // Для E32
-// #define RADIO_TYPE_SX1268   // Для E22
+//#define RADIO_TYPE_SX1278   // Для E32
+#define RADIO_TYPE_SX1268   // Для E22
 
-// #define TRANSMITTER     //раскомментировать, если модуль будет использоваться как передатчик
-#define RECEIVER      //раскомментировать, если модуль будет использоваться как приёмник
+#define TRANSMITTER     //раскомментировать, если модуль будет использоваться как передатчик
+//#define RECEIVER      //раскомментировать, если модуль будет использоваться как приёмник
 
 #define DEBUG_PRINT     //раскомментировать для включения отладочного вывода в Serial Monitor
 
 //Дисплеи не используются в ESP8266 так как все пины заняты модемом и некоторыми задачами
 #if defined(ARDUINO_ARCH_ESP32)
   #define USE_DISPLAY     //раскомментировать для использования дисплея
-  #define FAN_USED        //раскомментировать для использования вентилятора охлаждения при передаче
+  //#define FAN_USED        //раскомментировать для использования вентилятора охлаждения при передаче
 #endif
 
 
@@ -107,6 +107,22 @@
   
   //****************   Для варианта радио нового образца Mesh_Zero_v2 на модеме E22-400M30S ************************//
   #ifdef RADIO_TYPE_SX1268
+    
+    #if defined(TRANSMITTER) && defined(VIBRO_USED)
+      #define VIBRO_PIN 42
+    #endif
+
+    //#ifdef FAN_USED
+      //#define FUN 5           //Пин вентилятора охлаждения
+    //#endif
+
+    #if defined(RECEIVER) && defined(RELAY_USED)
+      #define RELAY_PIN 4
+    #endif
+
+    #define LED_PIN 21      // Пин RGB светодиода
+    #define BUTTON_PIN 0    // Пин кнопки
+
 
     #ifdef USE_OLED_SSD1306
       #define OLED_SDA 3

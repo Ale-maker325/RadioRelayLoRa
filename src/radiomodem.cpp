@@ -6,11 +6,19 @@
 
 #ifdef ARDUINO_ARCH_ESP32
     SPIClass SPI_MODEM(FSPI); //Для ESP32
-    // DIO0_PIN (пин 2) используется для прерываний
-    Module mod(NSS_PIN, DIO0_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
+    
     #ifdef RADIO_TYPE_SX1278
+        // DIO0_PIN используется для прерываний
+        Module mod(NSS_PIN, DIO0_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
         SX1278 radio(&mod);
     #endif
+
+    #ifdef RADIO_TYPE_SX1268
+        // DIO0_PIN используется для прерываний
+        Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
+        SX1278 radio(&mod);
+    #endif
+
 #elif defined(ARDUINO_ARCH_ESP8266)
     #define SPI_MODEM SPI // Для ESP8266 используем стандартный объект SPI
     Module mod(NSS_PIN, DIO0_PIN, NRST_PIN, DIO1_PIN, SPI);
