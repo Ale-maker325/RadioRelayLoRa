@@ -109,7 +109,7 @@
   #ifdef RADIO_TYPE_SX1268
     
     #if defined(TRANSMITTER) && defined(VIBRO_USED)
-      #define VIBRO_PIN 42
+      #define VIBRO_PIN 18
     #endif
 
     //#ifdef FAN_USED
