@@ -5,7 +5,8 @@
 
 
 #ifdef ARDUINO_ARCH_ESP32
-    SPIClass SPI_MODEM(FSPI); //Для ESP32
+    // SPIClass SPI_MODEM(FSPI); //Для ESP32
+    SPIClass SPI_MODEM(HSPI);
     
     #ifdef RADIO_TYPE_SX1278
         // DIO0_PIN используется для прерываний
@@ -49,30 +50,44 @@ RadioManager MyRadio;
 
 bool RadioManager::beginRadio() {
     #ifdef ARDUINO_ARCH_ESP32
+    
         //Инициализируем SPI ESP32
         SPI_MODEM.begin(SCK_RADIO, MISO_RADIO, MOSI_RADIO, NSS_PIN);
-        radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
+        // radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
+        // 2. РУЧНОЙ СБРОС (Reset) чипа SX1268
+        // Это гарантирует, что чип выйдет из неопределенного состояния
+        pinMode(NRST_PIN, OUTPUT);
+        digitalWrite(NRST_PIN, LOW);
+        delay(20); 
+        digitalWrite(NRST_PIN, HIGH);
+        delay(50); // Даем время чипу загрузить прошивку из внутреннего ROM
+    
     #elif defined(ARDUINO_ARCH_ESP8266)
          // Инициализируем SPI ESP8266
         SPI_MODEM.begin();
     #endif
     
     // Настройка прерывания на DIO0
-    radio.setPacketReceivedAction(setFlag);
+    // radio.setPacketReceivedAction(setFlag);
 
     int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
                             config.codingRate, config.syncWord, config.outputPower, 
                             config.preambleLength, config.gain);
 
     if (state == RADIOLIB_ERR_NONE) {
-        
+        radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
+        // Настройка прерывания на DIO0
+        radio.setPacketReceivedAction(setFlag);
+
         radio.setCurrentLimit(config.currentLimit);
         log_radio_event(state, "Radio Init Success");
+        delay(500);
         startListening(); 
         return true;
     }
     
     log_radio_event(state, "Radio Init Failed!");
+    delay(2000);
     return false;
 }
 
