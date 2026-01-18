@@ -14,9 +14,9 @@
     #endif
 
     #ifdef RADIO_TYPE_SX1268
-        // DIO0_PIN используется для прерываний
+        // BUSY_PIN используется для прерываний
         Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
-        SX1278 radio(&mod);
+        SX1268 radio(&mod);
     #endif
 
 #elif defined(ARDUINO_ARCH_ESP8266)
