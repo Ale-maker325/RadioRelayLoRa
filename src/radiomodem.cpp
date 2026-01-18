@@ -22,7 +22,6 @@
         // 4. BUSY_PIN (Busy) - Пин статуса
         // 5. SPI_MODEM - экземпляр SPI
         Module mod(NSS_PIN, DIO1_PIN, NRST_PIN, BUSY_PIN, SPI_MODEM);
-        // Module mod(NSS_PIN, BUSY_PIN, NRST_PIN, DIO1_PIN, SPI_MODEM);
         SX1268 radio(&mod);
     #endif
 
@@ -60,6 +59,18 @@ bool RadioManager::beginRadio() {
     #ifdef ARDUINO_ARCH_ESP32
         // 1. Инициализируем SPI
         SPI_MODEM.begin(SCK_RADIO, MISO_RADIO, MOSI_RADIO, NSS_PIN);
+        
+            
+    #elif defined(ARDUINO_ARCH_ESP8266)
+         // Инициализируем SPI ESP8266
+        SPI_MODEM.begin();
+    #endif
+    
+    int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
+                            config.codingRate, config.syncWord, config.outputPower, 
+                            config.preambleLength, config.gain);
+
+    if (state == RADIOLIB_ERR_NONE) {
 
         // ПРАВИЛЬНАЯ ИНИЦИАЛИЗАЦИЯ ДЛЯ SX1268 (E22)
         // Сначала вызываем базовый begin БЕЗ параметров, чтобы просто "разбудить" чип
@@ -68,22 +79,9 @@ bool RadioManager::beginRadio() {
             // ПЕРЕД .begin() настраиваем TCXO
             // В Meshtastic используется 1.8V и задержка 1.6мс. 
             // В RadioLib это делается так:
-            radio.setTCXO(1.8); 
+            radio.setTCXO(2.4);
+            radio.setDio2AsRfSwitch(true); 
         #endif
-            
-    #elif defined(ARDUINO_ARCH_ESP8266)
-         // Инициализируем SPI ESP8266
-        SPI_MODEM.begin();
-    #endif
-    
-    // Настройка прерывания на DIO0
-    radio.setPacketReceivedAction(setFlag);
-
-    int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
-                            config.codingRate, config.syncWord, config.outputPower, 
-                            config.preambleLength, config.gain);
-
-    if (state == RADIOLIB_ERR_NONE) {
 
         // Только после успешного begin настраиваем обвязку:
         // Настройка ключей антенны (Пины 1 и 2)

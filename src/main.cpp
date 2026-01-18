@@ -67,15 +67,16 @@ void setup()
   #endif
 
   // 5. Запуск радиомодема
-  if (!MyRadio.beginRadio()) {
-    log_radio_event(-1, "Radio Error!");
-      while (1) { // Если радио не завелось — мигаем красным
-        WriteColorPixel(COLORS_RGB_LED::red);
-        delay(300);
-        WriteColorPixel(COLORS_RGB_LED::black);
-        delay(300);
-      }
+  if (!MyRadio.beginRadio())
+  {
+    while (1)
+    { // Если радио не завелось — мигаем красным
+      WriteColorPixel(COLORS_RGB_LED::red);
+      delay(300);
+      WriteColorPixel(COLORS_RGB_LED::black);
+      delay(300);
     }
+  }
 
     #ifdef TRANSMITTER
       btn.setTapHandler(handleTap);
