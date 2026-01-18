@@ -5,8 +5,8 @@
 
 
 #ifdef ARDUINO_ARCH_ESP32
-    // SPIClass SPI_MODEM(FSPI); //Для ESP32
-    SPIClass SPI_MODEM(HSPI);
+    SPIClass SPI_MODEM(FSPI); //Для ESP32
+    // SPIClass SPI_MODEM(HSPI);
     
     #ifdef RADIO_TYPE_SX1278
         // DIO0_PIN используется для прерываний
@@ -79,7 +79,9 @@ bool RadioManager::beginRadio() {
     #ifdef RADIO_TYPE_SX1268
         // Мы "говорим" чипу использовать внешний кварц и подать на него 2.4V.
         // Без этого вызов radio.begin ниже вернет -707 (таймаут).
-        radio.setTCXO(2.4); 
+        radio.setTCXO(1.8);
+        // radio.setRegulatorDCDC();
+        //radio.setRegulatorLDO();
     #endif
 
     //ТЕПЕРЬ ЗАПУСКАЕМ ЧИП
