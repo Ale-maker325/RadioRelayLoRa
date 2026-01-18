@@ -57,19 +57,15 @@ RadioManager MyRadio;
 
 bool RadioManager::beginRadio() {
     #ifdef ARDUINO_ARCH_ESP32
-        //Инициализируем SPI
+        //Инициализируем SPI и Reset (оставляем как было, это работает)
         SPI_MODEM.begin(SCK_RADIO, MISO_RADIO, MOSI_RADIO, NSS_PIN);
-
-        #ifdef RADIO_TYPE_SX1268
-            //РУЧНОЙ СБРОС — КРИТИЧЕСКИ ВАЖНО для SX1268
-            //Без этого пин BUSY может быть заблокирован в HIGH, и будет ошибка -707
-            pinMode(NRST_PIN, OUTPUT);
-            digitalWrite(NRST_PIN, LOW);
-            delay(20); 
-            digitalWrite(NRST_PIN, HIGH);
-            delay(50);
-        #endif
-            
+        
+        pinMode(NRST_PIN, OUTPUT);
+        digitalWrite(NRST_PIN, LOW);
+        delay(20); 
+        digitalWrite(NRST_PIN, HIGH);
+        delay(50);
+                    
     #elif defined(ARDUINO_ARCH_ESP8266)
          // Инициализируем SPI ESP8266
         SPI_MODEM.begin();
@@ -84,38 +80,44 @@ bool RadioManager::beginRadio() {
         //radio.setRegulatorLDO();
     #endif
 
+    // Настройка ключей антенны
+    //radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
+
     //ТЕПЕРЬ ЗАПУСКАЕМ ЧИП
-    int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
+    #ifdef RADIO_TYPE_SX1278
+        int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
+                                config.codingRate, config.syncWord, config.outputPower, 
+                                config.preambleLength, config.gain);
+    #endif
+    #ifdef RADIO_TYPE_SX1268
+        // Для SX1268: добавляем TCXO Voltage и режим регулятора
+        // Именно здесь мы исправляем ту ошибку, которая давала -707
+        int state = radio.begin(config.frequency, config.bandwidth, config.spreadingFactor, 
                             config.codingRate, config.syncWord, config.outputPower, 
-                            config.preambleLength, config.gain);
+                            config.preambleLength, config.tcxoVoltage, config.useRegulatorLDO);
+    #endif
 
     if (state == RADIOLIB_ERR_NONE) {
 
-        // ПРАВИЛЬНАЯ ИНИЦИАЛИЗАЦИЯ ДЛЯ SX1268 (E22)
-        // Сначала вызываем базовый begin БЕЗ параметров, чтобы просто "разбудить" чип
-        // Но перед этим ОБЯЗАТЕЛЬНО настраиваем TCXO, так как без него он не ответит.
         #ifdef RADIO_TYPE_SX1268
             radio.setDio2AsRfSwitch(true);
             // Включаем Boosted Gain для лучшего приема (как в Meshtastic)
             radio.setRxBoostedGainMode(true);
         #endif
 
-        // Только после успешного begin настраиваем обвязку:
-        // Настройка ключей антенны
-        radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
-
-        // Настройка прерывания
-        radio.setPacketReceivedAction(setFlag);
-
-        // Дополнительные настройки из твоего рабочего лога Meshtastic
-        #ifdef RADIO_TYPE_SX1268
-            radio.setRxBoostedGainMode(RADIOLIB_SX126X_RX_GAIN_BOOSTED);
+        #ifdef ARDUINO_ARCH_ESP32
+            radio.setRfSwitchPins(RX_EN_PIN, TX_EN_PIN);
         #endif
-        
-        
+        radio.setPacketReceivedAction(setFlag);
         radio.setCurrentLimit(config.currentLimit);
+
+        // // Дополнительные настройки из твоего рабочего лога Meshtastic
+        // #ifdef RADIO_TYPE_SX1268
+        //     radio.setRxBoostedGainMode(RADIOLIB_SX126X_RX_GAIN_BOOSTED);
+        // #endif
+        
+        
         log_radio_event(state, "Radio Init Success");
-        delay(500);
         startListening(); 
         return true;
     }
