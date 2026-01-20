@@ -33,12 +33,25 @@
   //#define USE_TFT_ST7735
 #endif
 
-#define COMMAND_EN_RELAY "CMD_6S_ACTIVATE"  //команда на включение реле
-#define ACK_FROM_RECEIVER "ACK_OK"          //подтверждение от приёмника
-#define WAITING_RESPONCE 1500                //время ожидания ответа от приёмника когда сигнал отправлен
+
+
+// ################## НАСТРОЙКИ ПРОТОКОЛА ОБМЕНА И КОМАНД МЕЖДУ TX И RX ##################
+#define ACK_FROM_RECEIVER_IF_ON  "ACK_OK"    //подтверждение от приёмника команды на включение
+#define ACK_FROM_RECEIVER_IF_OFF "ACK_OFF"   //подтверждение от приёмника команды на выключение
+
 // Команды управления
+#define RELAY_GET_STATUS // Раскомментировано — при включении передатчик запрашивает статус реле у приёмника, чтобы знать включено оно или нет
+#ifdef RELAY_GET_STATUS
+  #define CMD_GET_STATUS "GET_ST"   // Сама команда запроса статуса реле
+  #define ACK_RELAY_IS_ON  "RELAY_IS_ON" //ответ приёмника на запрос статуса реле - включено
+  #define ACK_RELAY_IS_OFF "RELAY_IS_OFF" //ответ приёмника на запрос статуса реле - выключено
+#endif
+
 #define CMD_RELAY_ON  "RELAY_ON"   // Команда на включение
 #define CMD_RELAY_OFF "RELAY_OFF"  // Команда на выключение
+#define TIMEOUT_WAITING_TX 80      // Время ожидания приёмником пока передатчик переключается в режим приёма (мс)
+#define TIMEOUT_WAITING_RX 400    // Время ожидания передатчиком ответа от приёмника (мс)
+// ################## КОНЕЦ НАСТРОЕК ПРОТОКОЛА ОБМЕНА И КОМАНД МЕЖДУ TX И RX ##################
 
 
 

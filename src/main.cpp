@@ -6,20 +6,40 @@
 #include "logger.h"
 #include "rgb_led.h"
 
-
+// Библиотека для работы с энергонезависимой памятью ESP32 встроенная в Arduino Core
+#if defined(ARDUINO_ARCH_ESP32)
+  #include <Preferences.h> 
+#elif defined(ARDUINO_ARCH_ESP8266)
+  #include <EEPROM.h> // Добавляем EEPROM для 8266
+#endif
 
 // ОПРЕДЕЛЯЕМ RADIO_NAME: берем из настроек, чтобы логгер знал, кто пишет (TX или RX)
 #ifdef TRANSMITTER
-  #define BUTTON_DELAY_PRESS 5000  // Задержка удержания кнопки для длинного нажатия (5 секунд)
   String RADIO_NAME = "TX";
-  Button2 btn(BUTTON_PIN);
+  // Параметры по порядку: 
+  // 1. BUTTON_PIN - номер твоего пина
+  // 2. INPUT_PULLUP - режим работы (уже выбран по умолчанию)
+  // 3. true - означает, что кнопка замыкается на "землю" (Active Low)
+  Button2 btn(BUTTON_PIN, INPUT_PULLUP, true);
+  
+  // Объект памяти только для ESP32
+  #if defined(ARDUINO_ARCH_ESP32)
+    Preferences pref;
+  #endif
+
+  // Глобальные переменные состояния  
+  bool isProcessing = false; // Флаг для защиты от повторных нажатий во время работы
+  bool relayIsOn = false;     // Текущее состояние реле (подгрузится из памяти)
+
+
   
   // Прототипы функций
-  void handleTap(Button2& b); // Прототип функции обработки нажатия 
-  void handleLongPress(Button2& b); // Прототип функции обработки нажатия с удержанием
-  bool sendCommandAndWaitAck(String cmd); // Общая функция для отправки с подтверждением
+  void handleTap(Button2& b); // Прототип функции обработки однократного нажатия кнопки
+  void handleDoubleClick(Button2& b); // Прототип функции обработки двойного нажатия кнопки
+  bool sendCommandAndWaitAck(String cmd); // Умная функция с таймаутом для отправки с подтверждением 
 #else
   String RADIO_NAME = "RX";
+  bool relayIsOn = false;
 #endif
 
 
@@ -77,22 +97,77 @@ void setup()
       delay(100);
       WriteColorPixel(COLORS_RGB_LED::black);
       delay(100);
+      print_log("[ERROR] ", "Radio Init Failed!");
+      display_print_status("[ERROR] ", "Radio Init Failed!");
     }
   }
 
-    #ifdef TRANSMITTER
-      btn.setTapHandler(handleTap);
-      btn.setLongClickTime(BUTTON_DELAY_PRESS);                 // Устанавливаем порог 5 секунд
-      btn.setLongClickDetectedHandler(handleLongPress);   // Обработчик для 5 секунд 
-      //log_radio_event(0, "TX System Ready");
-      print_log("SYSTEM", "TX Ready: Tap=ON, 5s Hold=OFF");
+  // 6. Настройка кнопки (только для TX)
+  #ifdef TRANSMITTER
+    #if defined(ARDUINO_ARCH_ESP32)
+      //Инициализация энергонезависимой памяти (NVS) "relay-app" - имя хранилища, false - режим чтение/запись
+      pref.begin("relay-app", false);
+      //Загружаем сохраненное состояние. Если данных нет (первый запуск), ставим false (OFF)
+      relayIsOn = pref.getBool("state", false);
     #endif
 
-    #ifdef RECEIVER
-      // log_radio_event(0, "RX Listening...");
-      print_log("SYSTEM", "RX Ready: Waiting for commands...");
-      // Модем автоматически уходит в режим прослушки в MyRadio.beginRadio()
+    // --- НОВАЯ ФИТЧА: Опрос реального состояния при включении ---
+    #ifdef RELAY_GET_STATUS
+      print_log("[SYSTEM] ", "Checking RX status...");
+      String statusResp;
+      MyRadio.send(CMD_GET_STATUS);
+      MyRadio.startListening();
+      
+      unsigned long startQ = millis();
+      while (millis() - startQ < 1000) { // Ждем ответ 1 секунду
+        if (MyRadio.isDataReady()) {
+          if (MyRadio.receive(statusResp) == RADIOLIB_ERR_NONE) {
+            if (statusResp == ACK_RELAY_IS_ON) {
+                relayIsOn = true;
+                #if defined(ARDUINO_ARCH_ESP32)
+                  pref.putBool("state", true);
+                #endif
+                break;
+            } else if (statusResp == ACK_RELAY_IS_OFF) {
+                relayIsOn = false;
+                #if defined(ARDUINO_ARCH_ESP32)
+                  pref.putBool("state", false);
+                #endif
+                break;
+            }
+          }
+        }
+      }
     #endif
+    // --- Конец новой фитчи ---
+    
+    //Настраиваем обработчики по совету разработчика библиотеки ClickHandler четко разделяет одиночное и двойное нажатие
+    btn.setTapHandler(handleTap);
+    btn.setDoubleClickTime(500); // Устанавливаем время для распознавания двойного клика (500 мс)
+    btn.setDoubleClickHandler(handleDoubleClick);
+
+    // Формируем строку статуса последнего запомненного состояния реле на основе считанного из памяти значения
+    print_log("[SYSTEM] ", relayIsOn ? "Started: Relay is ON" : "Started: Relay is OFF");
+    display_print_status("[SYSTEM] ", relayIsOn ? "Relay is ON" : "Relay is OFF");
+    if(relayIsOn) WriteColorPixel(COLORS_RGB_LED::green);
+    else WriteColorPixel(COLORS_RGB_LED::red);
+    print_log("[SYSTEM] ", "TX Ready: 1 click = ON, 2 clicks = OFF");
+  #endif
+
+  
+
+  // 7. Финальные действия для RX
+  #ifdef RECEIVER
+    #if defined(ARDUINO_ARCH_ESP8266)
+      EEPROM.begin(4); // Инициализируем 4 байта (нам нужен только 0-й адрес)
+      relayIsOn = (EEPROM.read(0) == 1); // Читаем байт: 1 = ON, 0 = OFF
+      // Устанавливаем реле в сохраненное состояние , которое было сохранено в память при последнем выключении питания
+      digitalWrite(RELAY_PIN, relayIsOn ? LOW : HIGH);
+    #endif
+    // log_radio_event(0, "RX Listening...");
+    print_log("[SYSTEM] ", "RX Ready: Waiting for commands...");
+    // Модем автоматически уходит в режим прослушки в MyRadio.beginRadio()
+  #endif
 
   // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
   // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
@@ -125,37 +200,67 @@ void loop()
     {
       String rxMessage;
       int state = MyRadio.receive(rxMessage);
-
+      
       if (state == RADIOLIB_ERR_NONE) 
       {
         print_log("RX", "Received: " + rxMessage);
 
-        if (rxMessage == CMD_RELAY_ON) {
-          digitalWrite(RELAY_PIN, LOW); // ВКЛЮЧАЕМ реле постоянно
-          delay(50); // ДАЕМ ПЕРЕДАТЧИКУ ВРЕМЯ ПЕРЕКЛЮЧИТЬСЯ НА ПРИЕМ
-          MyRadio.send("ACK_ON");        // Подтверждаем включение
+        if (rxMessage == CMD_RELAY_ON)
+        {
+          digitalWrite(RELAY_PIN, LOW);                   // ВКЛЮЧАЕМ реле постоянно
+          relayIsOn = true; // Обновляем локальную переменную
+          #if defined(ARDUINO_ARCH_ESP8266)
+            EEPROM.write(0, 1); // Записываем "включено"
+            EEPROM.commit();    // Фиксируем во Flash
+          #endif
+          delay(TIMEOUT_WAITING_TX);                                      // ДАЕМ ПЕРЕДАТЧИКУ ВРЕМЯ ПЕРЕКЛЮЧИТЬСЯ НА ПРИЕМ
+          MyRadio.send(ACK_FROM_RECEIVER_IF_ON);          // Подтверждаем включение
           display_print_status("RELAY", "STATUS: ON");
+          //У ESP8266 нет RGB светодиода, поэтому этот участок только для ESP32
           #ifdef ARDUINO_ARCH_ESP32
             WriteColorPixel(COLORS_RGB_LED::green);
           #endif
         } 
         else if (rxMessage == CMD_RELAY_OFF) {
-          digitalWrite(RELAY_PIN, HIGH);  // ВЫКЛЮЧАЕМ реле
-          delay(50); // ДАЕМ ПЕРЕДАТЧИКУ ВРЕМЯ ПЕРЕКЛЮЧИТЬСЯ НА ПРИЕМ
-          MyRadio.send("ACK_OFF");       // Подтверждаем выключение
+          digitalWrite(RELAY_PIN, HIGH);                  // ВЫКЛЮЧАЕМ реле
+          relayIsOn = false; // Обновляем локальную переменную
+          #if defined(ARDUINO_ARCH_ESP8266)
+            EEPROM.write(0, 0); // Записываем "выключено"
+            EEPROM.commit();    // Фиксируем во Flash
+          #endif
+          delay(TIMEOUT_WAITING_TX);                                      // ДАЕМ ПЕРЕДАТЧИКУ ВРЕМЯ ПЕРЕКЛЮЧИТЬСЯ НА ПРИЕМ
+          MyRadio.send(ACK_FROM_RECEIVER_IF_OFF);         // Подтверждаем выключение
           display_print_status("RELAY", "STATUS: OFF");
+          //У ESP8266 нет RGB светодиода, поэтому этот участок только для ESP32
           #ifdef ARDUINO_ARCH_ESP32
             WriteColorPixel(COLORS_RGB_LED::black);
           #endif
         }
+
+
+        // --- НОВАЯ ФИТЧА: Ответ на запрос статуса ---
+        else if (rxMessage == CMD_GET_STATUS) {
+           delay(50); // Короткая пауза перед ответом
+           // Читаем реальное состояние пина (у ESP32 LOW это ВКЛ)
+           if (digitalRead(RELAY_PIN) == LOW) {
+             MyRadio.send(ACK_RELAY_IS_ON);
+           } else {
+             MyRadio.send(ACK_RELAY_IS_OFF);
+           }
+        }
+        // --- Конец новой фитчи ---
+
         
         // Возвращаемся в режим прослушивания
         MyRadio.startListening();
         
+      } else {
+        print_log("RX", "Receive Error: " + String(state));
+        MyRadio.startListening();
       }
     }
   #endif
-  }
+}
 
 
 
@@ -165,160 +270,148 @@ void loop()
 #ifdef TRANSMITTER
   
   /**
- * @brief Обработка короткого нажатия (Включение)
- */
+   * @brief - Функция обработки одиночного нажатия кнопки (Включение)
+   * 
+   * @param b - кнопка Button2
+   */
   void handleTap(Button2& b)
   {
-    print_log("BUTTON", "Short Press -> Sending ON");
-    if (sendCommandAndWaitAck(CMD_RELAY_ON))
-    {
-      display_print_status("TX OK", "Relay turned ON");
-    } else {
-      display_print_status("TX FAIL", "No Response");
-    }
-  }
+    if (isProcessing) return; // Игнорируем, если уже идет отправка
+    print_log("[BUTTON] ", "One Click sends CMD_RELAY_ON");
 
+    // Логика: если реле выключено, любое одиночное нажатие пытается его включить
+    // if (!relayIsOn) {
+      print_log("[ACTION] ", "One Click sends Requesting ON");
+      if (sendCommandAndWaitAck(CMD_RELAY_ON)) {
+        relayIsOn = true;
+        #if defined(ARDUINO_ARCH_ESP32)
+          pref.putBool("state", true); // Сохраняем во Flash
+        #endif
+        display_print_status("[INFO] ", "Relay is ON");
+      // }
+    } else {
+      // Если уже включено, просто игнорируем или выводим инфо на экран
+      print_log("[INFO] ", "Relay already ON. Use double click to turn OFF");
+      display_print_status("[INFO] ", "Relay already is ON");
+    }
+}
+
+
+
+  
   /**
- * @brief Обработка долгого нажатия 5 сек (Выключение)
- */
-  void handleLongPress(Button2& b)
+   * @brief - Функция обработки двойного нажатия (Выключение)
+   * 
+   * @param b - кнопка Button2
+   */
+  void handleDoubleClick(Button2& b)
   {
-    print_log("BUTTON", "Long Press (5s) -> Sending OFF");
-    if (sendCommandAndWaitAck(CMD_RELAY_OFF))
-    {
-      display_print_status("TX OK", "Relay turned OFF");
+    if (isProcessing) return; // Игнорируем, если уже идет отправка
+    print_log("[BUTTON] ", "Double Click sends CMD_RELAY_OFF");
+    
+    // Логика: если реле включено, двойной клик выключает его
+    if (relayIsOn) {
+      print_log("[ACTION] ", "Double Click sends Requesting OFF");
+      if (sendCommandAndWaitAck(CMD_RELAY_OFF)) {
+        relayIsOn = false;
+        #if defined(ARDUINO_ARCH_ESP32)
+          pref.putBool("state", false); // Сохраняем во Flash
+        #endif
+        display_print_status("[INFO] ", "Relay is OFF");
+      }
     } else {
-      display_print_status("TX FAIL", "No Response");
+      // Если уже выключено, просто игнорируем или выводим инфо на экран
+      print_log("[INFO]", "Already OFF. Use single click to turn ON");
+      display_print_status("[INFO] ", "Relay already is OFF");
     }
   }
 
 
+
+
+
+
   /**
- * @brief Логика отправки команды с 3 попытками и ожиданием ответа
- */
-bool sendCommandAndWaitAck(String cmd) {
-  bool success = false;
-  for (int i = 1; i <= 3; i++) {
-    print_log("TX", "Attempt " + String(i));
-    MyRadio.send(cmd);
+   * @brief Функция отправки команды с ожиданием подтверждения 
+   * 
+   * @param cmd Команда для отправки 
+   * @return true - успешное получение подтверждения 
+   * @return false - не получено подтверждение
+   */
+  bool sendCommandAndWaitAck(String cmd) {
+    isProcessing = true; // Блокируем новые срабатывания кнопки
+    bool ackReceived = false;   // Флаг успешного получения подтверждения
+    String response;            // Переменная для хранения ответа
     
-    // Ждем подтверждение 0.2 секунды
-    unsigned long startTime = millis();
-    while (millis() - startTime < 200) {
-      if (MyRadio.isDataReady()) {
-        String ack;
-        if (MyRadio.receive(ack) == RADIOLIB_ERR_NONE) {
-          if (ack.startsWith("ACK")) { // Проверяем, что это ответ
-            success = true;
-            break;
+    // 1. Отправляем команду приёмнику
+    int state = MyRadio.send(cmd);
+    if (state != RADIOLIB_ERR_NONE) //Если возникнет ошибка при отправке
+    { 
+      isProcessing = false; // Разблокируем кнопку
+      print_log("[TX] ", "Error sending: " + String(state));
+      return false;
+    }
+
+    // 2. Сразу включаем приемник, чтобы слушать ответ
+    MyRadio.startListening();
+
+    // 3. Ждем ответа строго определенное время (например, 1 секунды)
+    print_log("[TX] ", "Waiting for ACK...");
+    unsigned long startWait = millis();
+    const unsigned long timeout = TIMEOUT_WAITING_RX; // Таймаут ожидания ответа в миллисекундах
+
+    while (millis() - startWait < timeout)
+    {
+      // КРИТИЧЕСКИ ВАЖНО: продолжаем вызывать loop кнопки внутри цикла ожидания!
+      // Это позволит библиотеке Button2 корректно завершить свои внутренние таймеры.
+      //btn.loop();
+
+      // ВАЖНО: продолжаем опрашивать радио в цикле
+      if (MyRadio.isDataReady())
+      {
+        if (MyRadio.receive(response) == RADIOLIB_ERR_NONE)
+        {
+          // Проверяем, что пришел именно нужный нам ACK из settings.h
+          if (response == (ACK_FROM_RECEIVER_IF_ON) || (response == ACK_FROM_RECEIVER_IF_OFF))
+          {
+            ackReceived = true;
+            break; // Выходим из цикла, ответ получен!
           }
         }
       }
+    // delay(10); // Чтобы ESP32 не "раскалился" в пустом цикле
     }
-    if (success) break;
-    delay(100);
-  }
-  
-  if (success) {
-    WriteColorPixel(COLORS_RGB_LED::green);
-    log_radio_event(0, "DONE! RX CONFIRMED");
-  } else {
-    WriteColorPixel(COLORS_RGB_LED::red);
-    log_radio_event(-1, "FAIL: NO RESPONSE");
-  }
-  
-  MyRadio.startListening(); // Вернуться в режим приема
-  return success;
-}
-#endif
 
-
-
-
-
-
-
-
-
-//   bool success = false;
-//   String command = String(COMMAND_EN_RELAY);
-//   String feedback = "";
-
-//   // Пытаемся отправить команду до 3-х раз
-//   for (int attempt = 1; attempt <= 3; attempt++)
-//   {
-//     // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
-//     // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
-//     #if defined(ARDUINO_ARCH_ESP32)
-//       WriteColorPixel(COLORS_RGB_LED::red); // Красный при передаче
-//     #endif
-//     log_radio_event(0, "TX Attempt " + String(attempt));
-
-//     // Отправляем сигнал
-//     int tx_state = MyRadio.send(command);
-
-//     if (tx_state == RADIOLIB_ERR_NONE)
-//     {
-//       // Включаем прием сразу после отправки, чтобы поймать ответ
-//       MyRadio.startListening();
-
-//       log_radio_event(0, "Wait ACK...");
+    // 4. Обрабатываем результат
+    if (ackReceived)
+    {
+      WriteColorPixel(COLORS_RGB_LED::green);
+      #ifdef VIBRO_USED
+        digitalWrite(VIBRO_PIN, HIGH); delay(500); digitalWrite(VIBRO_PIN, LOW);
+      #endif
       
-//       // Ожидаем ответа от приемника (таймаут задается в settings.h)
-//       unsigned long startWait = millis();
-//       while (millis() - startWait < WAITING_RESPONCE)
-//       {
-//         if (MyRadio.isDataReady()) // Если пришел пакет
-//         {
-//           int rx_state = MyRadio.receive(feedback);
-//           if (rx_state == RADIOLIB_ERR_NONE && feedback == String(ACK_FROM_RECEIVER))
-//           {
-//             success = true;
-//             break; // Успех, выходим из ожидания
-//           }
-//         }
-//         yield(); // Чтобы ESP32 не ушла в перезагрузку по WDT
-//       }
-//     }
+      if(response == ACK_FROM_RECEIVER_IF_ON)
+      {
+        log_radio_event(0, "DONE! RX CONFIRMED ON");
+      }
+      else if(response == ACK_FROM_RECEIVER_IF_OFF)
+      {
+        log_radio_event(0, "DONE! RX CONFIRMED OFF");
+      }
 
-//     if (success) break; // Если получили подтверждение, следующие попытки не нужны
-//     delay(100); // Пауза между попытками
-//   }
+      display_print_status("[SUCCESS] ", "ACK received from RX");
     
-//   // Результат операции
-//   if (success)
-//   {
-//     log_radio_event(0, "DONE! RX CONFIRMED");
-//     // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
-//     // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
-//     #if defined(ARDUINO_ARCH_ESP32)
-//       WriteColorPixel(COLORS_RGB_LED::green); // Зеленый — успех
-//     #endif
-//     #ifdef VIBRO_USED
-//       digitalWrite(VIBRO_PIN, HIGH);
-//       delay(1000);
-//       digitalWrite(VIBRO_PIN, LOW);
-//     #endif
-//   }
-//   else
-//   {
-//     log_radio_event(-1, "FAIL: NO RESPONSE");
-//     // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
-//     // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
-//     #if defined(ARDUINO_ARCH_ESP32)
-//       WriteColorPixel(COLORS_RGB_LED::red); // Красный — ошибка связи
-//     #endif
-//   }
+    } else {
+      WriteColorPixel(COLORS_RGB_LED::red);
+      print_log("[TX] ", "TIMEOUT: Receiver not responding");
+      display_print_status("[ERROR] ", "No ACK from RX");
+    }
+   
+    // Возвращаем радио в режим прослушивания для следующего раза
+    MyRadio.startListening();
+    isProcessing = false; // Снимаем блокировку
+    return ackReceived;
+  }
 
-//   // Возвращаемся в дежурный режим через секунду
-//   delay(2000);
-//   // У ESP8266 нет дисплея и логика работы пина для реле зависит от светодиода (они на одном пине)
-//   // к тому же пин ESP8266 работает инвертированно по отношению к ESP32, поэтому этот участок только для ESP32
-//   #if defined(ARDUINO_ARCH_ESP32)
-//     WriteColorPixel(COLORS_RGB_LED::blue);
-//   #endif
-  
-//   // Возвращаем радио в режим приема
-//   MyRadio.startListening();
-// }
-// #endif
+
+#endif

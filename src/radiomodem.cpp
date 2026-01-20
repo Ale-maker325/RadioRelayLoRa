@@ -3,9 +3,9 @@
 
 
 
-
+// Создаем объект радио в зависимости от типа платы и радиомодуля 
 #ifdef ARDUINO_ARCH_ESP32
-    SPIClass SPI_MODEM(FSPI); //Для ESP32
+    SPIClass SPI_MODEM(FSPI); // Используем HSPI для радио в случае ESP32
     // SPIClass SPI_MODEM(HSPI);
     
     #ifdef RADIO_TYPE_SX1278
@@ -38,13 +38,17 @@
 
 
 
-// Флаг прерывания
+// Флаг прерывания приема данных
 volatile bool receivedFlag = false; 
 
-// Обработчик прерывания
+/**
+ * @brief Функция обработки прерывания приема данных радио 
+ * 
+ */
 void IRAM_ATTR setFlag(void) {
     receivedFlag = true;
 }
+
 
 /**
  * ВАЖНО: Если линкер ругается на "undefined reference to MyRadio", 
@@ -54,7 +58,12 @@ void IRAM_ATTR setFlag(void) {
 RadioManager MyRadio;
 
 
-
+/**
+ * @brief  Функция инициализации радио 
+ * 
+ * @return true - инициализация успешна
+ * @return false - инициализация неуспешна
+ */
 bool RadioManager::beginRadio() {
     #ifdef ARDUINO_ARCH_ESP32
         //Инициализируем SPI и Reset (оставляем как было, это работает)
@@ -100,7 +109,7 @@ bool RadioManager::beginRadio() {
     if (state == RADIOLIB_ERR_NONE) {
 
         #ifdef RADIO_TYPE_SX1268
-            radio.setDio2AsRfSwitch(true);
+            //radio.setDio2AsRfSwitch(true);
             // Включаем Boosted Gain для лучшего приема (как в Meshtastic)
             radio.setRxBoostedGainMode(true);
         #endif
@@ -130,8 +139,9 @@ bool RadioManager::beginRadio() {
 }
 
 
+
 /**
- * @brief переходим в режим прослушивания
+ * @brief  Функция запуска режима прослушивания радио
  * 
  */
 void RadioManager::startListening() {
@@ -139,10 +149,27 @@ void RadioManager::startListening() {
     radio.startReceive();
 }
 
+
+
+/**
+ * @brief  Проверка, готовы ли данные для чтения 
+ * 
+ * @return true - данные готовы
+ * @return false - данные не готовы
+ */
 bool RadioManager::isDataReady() {
     return receivedFlag;
 }
 
+
+
+
+/**
+ * @brief - Функция отправки сообщения через радио 
+ * 
+ * @param message - сообщение для отправки 
+ * @return int - код состояния \ref status_codes 
+ */
 int RadioManager::send(const String& message) {
     #ifdef FAN_USED
     if (config.outputPower >= config.fanThreshold) digitalWrite(FUN, HIGH);
@@ -164,6 +191,13 @@ int RadioManager::send(const String& message) {
     return state;
 }
 
+
+/**
+ * @brief  Функция приема сообщения через радио 
+ * 
+ * @param message - переменная для сохранения принятого сообщения
+ * @return int - код состояния \ref status_codes
+ */
 int RadioManager::receive(String& message) {
     // Читаем данные, которые уже пришли в буфер по прерыванию
     int state = radio.readData(message);
@@ -171,10 +205,29 @@ int RadioManager::receive(String& message) {
     return state;
 }
 
+
+/**
+ * @brief  Функция применения изменений конфигурации радио
+ * 
+ * @return int - код состояния \ref status_codes
+ */
 int RadioManager::applyChanges() {
     radio.setCurrentLimit(config.currentLimit);
     return radio.setOutputPower(config.outputPower);
 }
 
+
+/**
+ * @brief  Функция получения текущего RSSI и SNR
+ * 
+ * @return float - значение RSSI или SNR
+ */
 float RadioManager::getRSSI() { return radio.getRSSI(); }
+
+
+/**
+ * @brief  Функция получения текущего SNR
+ * 
+ * @return float - значение SNR
+ */
 float RadioManager::getSNR() { return radio.getSNR(); }
