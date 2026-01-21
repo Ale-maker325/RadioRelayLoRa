@@ -52,6 +52,17 @@
     display.display();
   }
 
+  void display_print_status(int x, int y, String status, String message)
+  {
+    if (!isDisplayReady) return; // Если экрана нет, ничего не делаем и не тратим время
+    display.clearDisplay();
+    display.setCursor(x, y);
+    display.println(status);
+    display.println("---------");
+    display.println(message);
+    display.display();
+  }
+
   void display_clear()
   {
     if (!isDisplayReady) return; // Если экрана нет, ничего не делаем и не тратим время

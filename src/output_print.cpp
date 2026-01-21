@@ -9,20 +9,22 @@
  */
 void print_log(String status, String message) {
     #ifdef DEBUG_PRINT
-    // Формат: [TX] SUCCESS : Сообщение
-    Serial.print("[");
-    Serial.print(RADIO_NAME);
-    Serial.print("] ");
-    Serial.print(status);
-    Serial.print(" : ");
-    Serial.println(message);
+        // Формат: [TX] SUCCESS : Сообщение
+        Serial.print("[");
+        Serial.print(RADIO_NAME);
+        Serial.print("] ");
+        Serial.print(status);
+        Serial.print(" : ");
+        Serial.println(message);
     #endif
 }
 
 
 // Реализация для константных строк (экономит память)
 void print_log(const char* status, const char* message) {
-    print_log(String(status), String(message));
+    #ifdef DEBUG_PRINT
+        print_log(String(status), String(message));
+    #endif
 }
 
 
@@ -34,14 +36,14 @@ void print_log(const char* status, const char* message) {
  */
 void print_radio_state(int state, String info) {
     #ifdef DEBUG_PRINT
-    if (state == RADIOLIB_ERR_NONE) {
-        print_log("SUCCESS", info.length() > 0 ? info : "Operation finished");
-    } else {
-        // Если ошибка, выводим код ошибки
-        String errorMsg = "Code [" + String(state) + "] ";
-        if (info.length() > 0) errorMsg += "(" + info + ")";
-        print_log("ERROR", errorMsg);
-    }
+        if (state == RADIOLIB_ERR_NONE) {
+            print_log("SUCCESS", info.length() > 0 ? info : "Operation finished");
+        } else {
+            // Если ошибка, выводим код ошибки
+            String errorMsg = "Code [" + String(state) + "] ";
+            if (info.length() > 0) errorMsg += "(" + info + ")";
+            print_log("ERROR", errorMsg);
+        }
     #endif
 }
 

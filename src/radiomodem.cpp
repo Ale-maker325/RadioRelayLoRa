@@ -84,7 +84,7 @@ bool RadioManager::beginRadio() {
     #ifdef RADIO_TYPE_SX1268
         // Мы "говорим" чипу использовать внешний кварц и подать на него 2.4V.
         // Без этого вызов radio.begin ниже вернет -707 (таймаут).
-        radio.setTCXO(1.8);
+        radio.setTCXO(2.4);
         // radio.setRegulatorDCDC();
         //radio.setRegulatorLDO();
     #endif
