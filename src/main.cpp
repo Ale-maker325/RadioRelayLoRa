@@ -5,6 +5,7 @@
 #include "output_display.h" // Функции для рисования текста на маленьком экране
 #include "logger.h"         // Помогает выводить красивые сообщения в монитор порта на компьютере
 #include "rgb_led.h"        // Управляет цветом маленького светодиода на самой плате
+#include "ble_manager.h" // <--- ДОБАВЛЕНО BLE: Подключаем наш менеджер BLE
 
 /** * РАЗБОР РАБОТЫ С ЭНЕРГОНЕЗАВИСИМОЙ ПАМЯТЬЮ (NVS и EEPROM):
  * * Нам нужно, чтобы после выключения батарейки пульт помнил, включен свет или нет.
@@ -42,18 +43,28 @@
     Preferences pref; // Создаем инструмент для работы с памятью
   #endif
 
+  // Переменные для безопасности и таймера
+  unsigned long bleEnableTime = 0;           // Время включения BLE
+  const unsigned long BLE_TIMEOUT = 600000; // 10 минут в миллисекундах
+  bool isBleAuthenticated = false;          // Флаг успешного входа
+  String currentBlePass = "";               // Текущий пароль в ОЗУ
+
+
   // Прототипы функций (просто оглавление для компилятора)
-  //void handleTap(Button2& b); 
   void handleClick(Button2& b);
   void handleDoubleClick(Button2& b); 
+  void handleLongPress(Button2& b); // <--- ДОБАВЛЕНО BLE: прототип длинного нажатия
+  // Прототип новой функции обработки команд (обычная функция, не внутри класса!)
+  void processBleCommand(String cmd);
+  
   bool sendCommandAndWaitAck(String cmd);
-  // int numClicks = 0;
   void updateDisplayStatus(String status, String msg); 
 #else
   // --- НАСТРОЙКИ ДЛЯ ПРИЕМНИКА (ИСПОЛНИТЕЛЯ) ---
   String RADIO_NAME = "RX";
-  bool relayIsOn = false; // Фактическое состояние пина реле
 #endif
+
+
 
 #ifdef TRANSMITTER
 /**
@@ -135,12 +146,13 @@ void setup()
       MyRadio.rxOnline = MyRadio.sendCommandAndWaitAck(CMD_GET_STATUS, [](){ btn.loop(); }); // Функция сама вернет true или false
     #endif
     
-    // Настраиваем кнопку:
-    // btn.setTapHandler(handleTap);           // Один клик — ВКЛЮЧИТЬ
-    btn.setClickHandler(handleClick);         // Один клик — ВКЛЮЧИТЬ
-    btn.setLongClickHandler(handleClick); // Длинное нажатие тоже включит реле
-    btn.setDoubleClickTime(700);            // Время (мс), за которое нужно успеть нажать второй раз
-    btn.setDoubleClickHandler(handleDoubleClick); // Два клика — ВЫКЛЮЧИТЬ
+    // --- НАСТРОЙКИ КНОПКИ ---
+    btn.setClickHandler(handleClick);         
+    btn.setDoubleClickHandler(handleDoubleClick);
+    btn.setLongClickHandler(handleLongPress); 
+
+    btn.setDoubleClickTime(600); // Тайминг для двойного клика
+    btn.setLongClickTime(3000);  // 3 секунды для BLE
 
     // Обновляем экран: показываем, что мы вспомнили из памяти
     updateDisplayStatus(RADIO_NAME, MyRadio.relayIsOn ? "Last relay was ON" : "Last relay was OFF");
@@ -158,10 +170,32 @@ void setup()
   #endif
 }
 
+
+
+
+
+
 void loop()
 {
   #ifdef TRANSMITTER
-    btn.loop(); // ОЧЕНЬ ВАЖНО: постоянно проверяем кнопку, иначе она не сработает
+    btn.loop();   // 1. Слушаем кнопку
+    
+    if (MyBLE.isActive()) {
+        MyBLE.loop();
+        
+        // Автовыключение через 10 минут
+        if (millis() - bleEnableTime > BLE_TIMEOUT) {
+            // Тут нужна функция деактивации BLE (могу помочь написать)
+            print_log("[SYSTEM]", "BLE Автовыключение (тайм-аут)");
+            MyBLE.stop(); // <--- Теперь вызываем правильный стоп
+            // Опционально: можно вывести инфо на экран, что BLE выключен
+            updateDisplayStatus(RADIO_NAME, "BLE OFF (Idle)");
+        }
+
+        if (MyBLE.hasCommand()) {
+            processBleCommand(MyBLE.getCommand());
+        }
+    }
   #endif
 
   #ifdef RECEIVER
@@ -172,16 +206,21 @@ void loop()
       if (MyRadio.receive(rxMessage) == RADIOLIB_ERR_NONE) { 
         
         if (rxMessage == CMD_RELAY_ON) {
-          digitalWrite(RELAY_PIN, LOW); relayIsOn = true; // ВКЛ
+          digitalWrite(RELAY_PIN, LOW); 
+          MyRadio.relayIsOn = true; // Добавил MyRadio.
+          
           #if defined(ARDUINO_ARCH_ESP8266)
-            EEPROM.write(0, 1); EEPROM.commit(); // Запомнили в память
+            EEPROM.write(0, 1); 
+            EEPROM.commit(); // Запомнили в память
           #endif
+          
           delay(TIMEOUT_WAITING_TX); // Ждем чуть-чуть, пока пульт перейдет в режим приема подтверждения
           MyRadio.send(ACK_FROM_RECEIVER_IF_ON); // Отвечаем "Я всё сделал!"
           display_print_status("RELAY", "STATUS: ON");
           
         } else if (rxMessage == CMD_RELAY_OFF) {
-          digitalWrite(RELAY_PIN, HIGH); relayIsOn = false; // ВЫКЛ
+            digitalWrite(RELAY_PIN, HIGH);
+            MyRadio.relayIsOn = false; // ВЫКЛ
           #if defined(ARDUINO_ARCH_ESP8266)
             EEPROM.write(0, 0); EEPROM.commit();
           #endif
@@ -279,6 +318,109 @@ void handleDoubleClick(Button2& b) {
     } else {
         updateDisplayStatus("[INFO]", "RX ALREADY OFF");
         print_log("[handleDoubleClick] :", "RX already OFF");
+    }
+}
+
+
+
+
+
+
+// --- ЛОГИКА BLE ---
+// --- ОБРАБОТЧИКИ СОБЫТИЙ ---
+
+// 1. Включение Bluetooth (удержание кнопки)
+void handleLongPress(Button2& b) {
+    if (!MyBLE.isActive()) {
+        MyBLE.begin("LoRa_Remote_S3"); 
+        
+        // Сбрасываем авторизацию и время при каждом включении
+        bleEnableTime = millis();
+        isBleAuthenticated = false; 
+
+        updateDisplayStatus("SYSTEM", "BLE ENABLED");
+        print_log("[SYSTEM]", "Bluetooth ON");
+        
+        #ifdef VIBRO_USED
+        digitalWrite(VIBRO_PIN, HIGH); delay(200); digitalWrite(VIBRO_PIN, LOW);
+        #endif
+    }
+}
+
+
+
+
+
+
+
+
+// 2. Обработка команд С ТЕЛЕФОНА (вызывается из loop)
+/**
+ * ОБРАБОТКА КОМАНД BLE
+ * Реализует: авторизацию, смену пароля, запрос статуса и управление реле.
+ */
+void processBleCommand(String cmd) {
+    cmd.trim();
+    if (cmd.length() == 0) return;
+
+    // 1. Загружаем пароль из памяти
+    String savedPass = pref.getString("ble_pass", "123456");
+
+    // 2. БЛОК АВТОРИЗАЦИИ
+    if (!isBleAuthenticated) {
+        if (cmd.startsWith("pass ") && cmd.length() > 5) {
+            String inputPass = cmd.substring(5);
+            inputPass.trim();
+            if (inputPass == savedPass) {
+                isBleAuthenticated = true;
+                MyBLE.send("AUTH OK\n");
+            } else {
+                MyBLE.send("WRONG PASS\n");
+            }
+        } else {
+            MyBLE.send("Login: pass [password]\n");
+        }
+        return; 
+    }
+
+    // 3. БЛОК КОМАНД
+    if (cmd.startsWith("setpass ")) {
+        int firstSpace = cmd.indexOf(' ');
+        int secondSpace = cmd.indexOf(' ', firstSpace + 1);
+
+        // Проверяем, что есть оба пробела и после второго что-то есть
+        if (firstSpace != -1 && secondSpace != -1 && cmd.length() > secondSpace + 1) {
+            String oldP = cmd.substring(firstSpace + 1, secondSpace);
+            String newP = cmd.substring(secondSpace + 1);
+            oldP.trim(); newP.trim();
+
+            if (oldP == savedPass && newP.length() >= 4) {
+                pref.putString("ble_pass", newP);
+                MyBLE.send("PASS CHANGED\n");
+            } else {
+                MyBLE.send("SET ERROR\n");
+            }
+        } else {
+            MyBLE.send("Usage: setpass [old] [new]\n");
+        }
+    }
+    // ... остальное (on/off/status) у тебя в коде написано верно
+    else if (cmd.equalsIgnoreCase("on")) {
+        if (MyRadio.sendCommandAndWaitAck(CMD_RELAY_ON, [](){ btn.loop(); })) {
+            MyRadio.relayIsOn = true;
+            pref.putBool("state", true);
+            MyBLE.send("RELAY ON OK\n");
+        } else { MyBLE.send("RADIO ERR\n"); }
+    }
+    else if (cmd.equalsIgnoreCase("off")) {
+        if (MyRadio.sendCommandAndWaitAck(CMD_RELAY_OFF, [](){ btn.loop(); })) {
+            MyRadio.relayIsOn = false;
+            pref.putBool("state", false);
+            MyBLE.send("RELAY OFF OK\n");
+        } else { MyBLE.send("RADIO ERR\n"); }
+    }
+    else if (cmd.equalsIgnoreCase("status") || cmd == "?") {
+        MyBLE.send("ST: " + String(MyRadio.relayIsOn ? "ON" : "OFF") + "\n");
     }
 }
 
