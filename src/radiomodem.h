@@ -46,8 +46,21 @@ public:
     void startListening(); 
     bool isDataReady();
 
+    /**
+     * @brief - Функция отправки команды и ожидания подтверждения 
+     * 
+     * @param cmd - команда для отправки
+     * @param onTick - указатель на функцию (например, btn.loop), чтобы не вешать процессор
+     */
+    bool sendCommandAndWaitAck(String cmd, void (*onTick)() = nullptr);
+
     float getRSSI(); 
     float getSNR();
+
+    // Флаги (чек-боксы) нашего кода
+    bool isProcessing = false; // "Шлагбаум": если true, значит мы сейчас ждем ответ от радио и кнопку нажимать бесполезно
+    bool relayIsOn = false;    // Наше мнение о том, в каком состоянии сейчас реле
+    bool rxOnline = false;     // Связь: true, если приемник хоть раз ответил на команду успешно
 };
 
 extern RadioManager MyRadio;

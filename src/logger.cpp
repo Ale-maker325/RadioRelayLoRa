@@ -16,6 +16,6 @@ void log_radio_event(int state, String message) {
 
     #ifdef USE_DISPLAY
       // Исправлено: имя функции должно совпадать с output_display.h
-      display_print_status(status, message);
+      //display_print_status(status, message);
     #endif
 }

@@ -36,6 +36,13 @@
 
 
 
+/**
+ * ВАЖНО: Если линкер ругается на "undefined reference to MyRadio", 
+ * значит объект объявлен как extern, но нигде не создан.
+ * Создаем экземпляр менеджера радио здесь:
+ */
+RadioManager MyRadio;
+
 
 
 // Флаг прерывания приема данных
@@ -50,12 +57,6 @@ void IRAM_ATTR setFlag(void) {
 }
 
 
-/**
- * ВАЖНО: Если линкер ругается на "undefined reference to MyRadio", 
- * значит объект объявлен как extern, но нигде не создан.
- * Создаем экземпляр менеджера радио здесь:
- */
-RadioManager MyRadio;
 
 
 /**
@@ -137,6 +138,52 @@ bool RadioManager::beginRadio() {
     delay(2000);
     return false;
 }
+
+
+
+
+
+
+
+bool RadioManager::sendCommandAndWaitAck(String cmd, void (*onTick)()) {
+    this->isProcessing = true; // Закрываем "шлагбаум"
+    bool ackReceived = false; 
+    String response;
+
+    this->send(cmd);         // Кричим команду через наше радио
+    this->startListening();  // Переходим в режим ожидания
+
+    unsigned long startWait = millis(); 
+    
+    // Пока не прошло время таймаута из settings.h:
+    while (millis() - startWait < TIMEOUT_WAITING_RX) {
+        // Выполняем фоновую задачу (например, опрос кнопок), если она передана
+        if (onTick != nullptr) onTick();
+        
+        if (this->isDataReady()) { 
+            if (this->receive(response) == RADIOLIB_ERR_NONE) {
+                // Проверяем ответы, используя константы из settings.h
+                if (response == ACK_FROM_RECEIVER_IF_ON || response == ACK_RELAY_IS_ON) {
+                    this->relayIsOn = true; 
+                    ackReceived = true; 
+                    break; 
+                }
+                if (response == ACK_FROM_RECEIVER_IF_OFF || response == ACK_RELAY_IS_OFF) {
+                    this->relayIsOn = false; 
+                    ackReceived = true; 
+                    break; 
+                }
+            }
+        }
+        yield(); // Для стабильности систем на базе ESP
+    }
+
+    this->rxOnline = ackReceived; // Обновляем статус связи в классе
+    this->isProcessing = false;   // Открываем "шлагбаум"
+    return ackReceived;
+}
+
+
 
 
 

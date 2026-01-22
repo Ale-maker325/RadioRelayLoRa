@@ -1,33 +1,48 @@
 #include <Arduino.h>
-#include "Button2.h"        // Библиотека для удобной работы с кнопкой
-#include "settings.h"       // Твои настройки (пины, частоты, команды)
-#include "radiomodem.h"     // Логика работы LoRa модема
-#include "output_display.h" // Функции для вывода текста на экран
-#include "logger.h"         // Логирование событий
-#include "rgb_led.h"        // Управление встроенным светодиодом
+#include "Button2.h"        // Позволяет легко обрабатывать клики и двойные клики без написания сложных счетчиков времени
+#include "settings.h"       // Тут лежат названия твоих команд (типа "ON", "OFF") и номера пинов
+#include "radiomodem.h"     // Твой "пульт управления" радиочипом (отправка/прием данных через LoRa)
+#include "output_display.h" // Функции для рисования текста на маленьком экране
+#include "logger.h"         // Помогает выводить красивые сообщения в монитор порта на компьютере
+#include "rgb_led.h"        // Управляет цветом маленького светодиода на самой плате
 
-// --- Работа с памятью (чтобы состояние реле не сбрасывалось при выключении питания) ---
+/** * РАЗБОР РАБОТЫ С ЭНЕРГОНЕЗАВИСИМОЙ ПАМЯТЬЮ (NVS и EEPROM):
+ * * Нам нужно, чтобы после выключения батарейки пульт помнил, включен свет или нет.
+ * * --- ДЛЯ ESP32 (используется Preferences) ---
+ * 1. pref.begin("relay-app", false) — Мы открываем в памяти "хранилище" с именем "relay-app". 
+ * Параметр 'false' означает, что мы собираемся туда и писать, и читать (не "только чтение").
+ * 2. pref.getBool("state", false) — Мы просим выдать нам значение под ключом "state". 
+ * Если это самый первый запуск и там ничего нет, функция вернет 'false' (значение по умолчанию).
+ * 3. pref.putBool("state", true/false) — Мы записываем новое состояние. Это происходит мгновенно 
+ * и сразу сохраняется в чип памяти. Это надежнее старой EEPROM.
+ * * --- ДЛЯ ESP8266 (используется EEPROM) ---
+ * 1. EEPROM.begin(4) — Мы говорим: "Выдели нам 4 байта памяти". Это подготовка буфера в оперативной памяти.
+ * 2. EEPROM.read(0) — Мы читаем байт из ячейки №0. Память тут представлена как длинная строка ячеек, 
+ * у которых есть только номера, а не имена.
+ * 3. EEPROM.write(0, значение) — Мы записываем данные в ячейку. Но внимание: данные еще НЕ сохранились в чип!
+ * 4. EEPROM.commit() — САМЫЙ ВАЖНЫЙ ШАГ. Только после этой команды данные физически переносятся из 
+ * оперативной памяти в постоянную. Если забыть commit, после перезагрузки всё пропадет.
+ */
+
 #if defined(ARDUINO_ARCH_ESP32)
-  #include <Preferences.h>  // Библиотека для ESP32 (постоянная память NVS)
+  #include <Preferences.h>  // Библиотека для работы с NVS-памятью ESP32
 #elif defined(ARDUINO_ARCH_ESP8266)
-  #include <EEPROM.h>       // Старая добрая EEPROM для ESP8266
+  #include <EEPROM.h>       // Стандартный способ сохранения данных для старых плат
 #endif
 
 #ifdef TRANSMITTER
   // --- НАСТРОЙКИ ДЛЯ ПЕРЕДАТЧИКА (ПУЛЬТА) ---
   String RADIO_NAME = "TX";
-  // Инициализируем кнопку: пин из настроек, подтяжка к питанию, активный сигнал - LOW (земля)
+  
+  // Создаем объект кнопки. BUTTON_PIN — из settings.h, INPUT_PULLUP — подтягивает пин к питанию,
+  // чтобы он не "болтался в воздухе", true — кнопка замыкается на землю.
   Button2 btn(BUTTON_PIN, INPUT_PULLUP, true);
   
   #if defined(ARDUINO_ARCH_ESP32)
-    Preferences pref; // Объект для работы с памятью ESP32
+    Preferences pref; // Создаем инструмент для работы с памятью
   #endif
 
-  bool isProcessing = false; // Блокировщик: не дает отправить новую команду, пока ждем ответ на старую
-  bool relayIsOn = false;    // Мы «думаем», что реле сейчас в этом состоянии
-  bool rxOnline = false;     // Флаг: на связи ли приемник прямо сейчас
-
-  // Объявление функций (прототипы), чтобы компилятор знал о них заранее
+  // Прототипы функций (просто оглавление для компилятора)
   void handleTap(Button2& b); 
   void handleDoubleClick(Button2& b); 
   bool sendCommandAndWaitAck(String cmd); 
@@ -35,93 +50,105 @@
 #else
   // --- НАСТРОЙКИ ДЛЯ ПРИЕМНИКА (ИСПОЛНИТЕЛЯ) ---
   String RADIO_NAME = "RX";
-  bool relayIsOn = false; // Актуальное состояние реле на стороне приемника
+  bool relayIsOn = false; // Фактическое состояние пина реле
 #endif
 
-// --- ВСПОМОГАТЕЛЬНАЯ ФУНКЦИЯ ДЛЯ ПЕРЕДАТЧИКА ---
 #ifdef TRANSMITTER
 /**
- * Выводит статус на экран и меняет цвет светодиода.
- * Добавляет [OK], если связь есть, или [LOST], если связь потеряна.
+ * Функция, которая "рисует" статус на экране и меняет цвет светодиода.
+ * Нужна для того, чтобы не писать одни и те же команды по 10 раз в разных местах.
  */
 void updateDisplayStatus(String status, String msg) {
-    String conn = rxOnline ? " [OK]" : " [LOST]";
+    // Формируем строчку связи: [OK] если связь есть, или [LOST] если нет
+    String conn = MyRadio.rxOnline ? " [RELAY ONLINE]" : " [RELAY NOT ONLINE]";
     display_print_status(status + conn, msg);
     
-    if (!rxOnline) WriteColorPixel(COLORS_RGB_LED::blue);     // Синий — нет связи
-    else if (relayIsOn) WriteColorPixel(COLORS_RGB_LED::green); // Зеленый — реле включено
-    else WriteColorPixel(COLORS_RGB_LED::red);                 // Красный — реле выключено
+    // Меняем цвет встроенного RGB светодиода:
+    if (!MyRadio.rxOnline) WriteColorPixel(COLORS_RGB_LED::blue);       // СИНИЙ — нет связи (или еще не проверяли)
+    else if (MyRadio.relayIsOn) WriteColorPixel(COLORS_RGB_LED::green); // ЗЕЛЕНЫЙ — всё включено, связь есть
+    else WriteColorPixel(COLORS_RGB_LED::red);                 // КРАСНЫЙ — всё выключено, связь есть
 }
 #endif
 
+
+
+
+
+
+
+
+
+
 void setup()
 {
-  // Инициализация последовательного порта для отладки
+  // Включаем передачу данных в компьютер для отладки
   #ifdef DEBUG_PRINT
     Serial.begin(115200);
   #endif
 
-  // 1. Короткая вибрация при включении (если настроено в settings.h)
+  // 1. Делаем короткий "вжжжух" вибромоторчиком при включении (если он есть в схеме)
   #if defined(TRANSMITTER) && defined(VIBRO_USED)
     pinMode(VIBRO_PIN, OUTPUT);
     digitalWrite(VIBRO_PIN, HIGH); delay(100); digitalWrite(VIBRO_PIN, LOW);
   #endif
 
-  // 2. Настройка пина реле для Приемника
+  // 2. Настраиваем ножку (пин), которая дергает реле
   #if defined(RECEIVER) && defined(RELAY_USED)
     pinMode(RELAY_PIN, OUTPUT);
     #if defined(ARDUINO_ARCH_ESP32)
-      digitalWrite(RELAY_PIN, LOW); // У ESP32 логика может отличаться
+      digitalWrite(RELAY_PIN, LOW); // Для ESP32 по умолчанию ставим 0
     #elif defined(ARDUINO_ARCH_ESP8266)
-      digitalWrite(RELAY_PIN, HIGH); // У ESP8266 обычно HIGH — это выкл. реле
+      digitalWrite(RELAY_PIN, HIGH); // Для ESP8266 обычно реле выключено при 1 (HIGH)
     #endif
   #endif
   
-  // 3. Инициализация дисплея и светодиода для ESP32
+  // 3. Запускаем экран и красим светодиод в синий (значит "Гружусь...")
   #if defined(ARDUINO_ARCH_ESP32)
-    WriteColorPixel(COLORS_RGB_LED::blue); // Зажигаем синим при старте
+    WriteColorPixel(COLORS_RGB_LED::blue); 
     #ifdef USE_DISPLAY
-      display_init();
+      display_init(); // Запуск экрана
     #endif
   #endif
 
-  // 4. Запуск радиомодуля LoRa
+  // 4. Проверяем радиомодуль. Если он не подключен — мигаем КРАСНЫМ и дальше не идем
   if (!MyRadio.beginRadio()) {
-    while (1) { // Если радио не инициализировалось — мигаем красным бесконечно
+    while (1) {
       WriteColorPixel(COLORS_RGB_LED::red);
       display_print_status("ERROR", "Radio Fail");
       delay(500);
     }
   }
 
-  // 5. Специфичные настройки для Передатчика (чтение памяти и синхронизация)
+  // 5. Особые действия для ПУЛЬТА при включении
   #ifdef TRANSMITTER
     #if defined(ARDUINO_ARCH_ESP32)
-      pref.begin("relay-app", false); // Открываем хранилище "relay-app"
-      relayIsOn = pref.getBool("state", false); // Достаем последнее сохраненное состояние
+      // Вспоминаем, что было до выключения питания
+      pref.begin("relay-app", false); 
+      MyRadio.relayIsOn = pref.getBool("state", false); 
     #endif
 
-    // Попытка узнать реальное состояние приемника сразу при включении пульта
+    // Если в настройках включен опрос статуса — спрашиваем у приемника, как он там
     #ifdef RELAY_GET_STATUS
       print_log(RADIO_NAME, "Syncing...");
-      rxOnline = sendCommandAndWaitAck(CMD_GET_STATUS); // Спрашиваем статус у приемника
+      MyRadio.rxOnline = MyRadio.sendCommandAndWaitAck(CMD_GET_STATUS, [](){ btn.loop(); }); // Функция сама вернет true или false
     #endif
     
-    // Назначаем функции на клики кнопки
-    btn.setTapHandler(handleTap);           // Одиночный клик
-    btn.setDoubleClickTime(700);            // Окно ожидания второго клика (мс)
-    btn.setDoubleClickHandler(handleDoubleClick); // Двойной клик
+    // Настраиваем кнопку:
+    btn.setTapHandler(handleTap);           // Один клик — ВКЛЮЧИТЬ
+    btn.setDoubleClickTime(700);            // Время (мс), за которое нужно успеть нажать второй раз
+    btn.setDoubleClickHandler(handleDoubleClick); // Два клика — ВЫКЛЮЧИТЬ
 
-    // Выводим информацию на экран после загрузки
-    updateDisplayStatus("SYSTEM", relayIsOn ? "Relay: ON" : "Relay: OFF");
+    // Обновляем экран: показываем, что мы вспомнили из памяти
+    updateDisplayStatus(RADIO_NAME, MyRadio.relayIsOn ? "Last set relay was ON" : "Last set relay was OFF");
+    print_log(RADIO_NAME, MyRadio.relayIsOn ? "Last set relay was ON" : "Last set relay was OFF");
   #endif
 
-  // 6. Специфичные настройки для Приемника (чтение памяти EEPROM)
+  // 6. Особые действия для ПРИЕМНИКА при включении
   #ifdef RECEIVER
     #if defined(ARDUINO_ARCH_ESP8266)
-      EEPROM.begin(4); // Инициализация 4 байт памяти
-      relayIsOn = (EEPROM.read(0) == 1); // Читаем сохраненное состояние
-      digitalWrite(RELAY_PIN, relayIsOn ? LOW : HIGH); // Сразу выставляем реле
+      EEPROM.begin(4); // Готовим память
+      MyRadio.relayIsOn = (EEPROM.read(0) == 1); // Читаем состояние
+      digitalWrite(RELAY_PIN, MyRadio.relayIsOn ? LOW : HIGH); // Сразу ставим реле как было
     #endif
     print_log("[SYSTEM] ", "RX Ready...");
   #endif
@@ -130,131 +157,96 @@ void setup()
 void loop()
 {
   #ifdef TRANSMITTER
-    btn.loop(); // Постоянно опрашиваем кнопку на предмет нажатий
+    btn.loop(); // ОЧЕНЬ ВАЖНО: постоянно проверяем кнопку, иначе она не сработает
   #endif
 
   #ifdef RECEIVER
-    // ПРИЕМНИК: проверяем, пришло ли что-то по радио
+    // Секция приема: слушаем эфир, не летит ли нам команда
     if (MyRadio.isDataReady()) {
       String rxMessage;
-      if (MyRadio.receive(rxMessage) == RADIOLIB_ERR_NONE) { // Если данные приняты без ошибок
+      // Если данные получены без помех:
+      if (MyRadio.receive(rxMessage) == RADIOLIB_ERR_NONE) { 
         
         if (rxMessage == CMD_RELAY_ON) {
-          // Команда на включение
-          digitalWrite(RELAY_PIN, LOW); relayIsOn = true;
+          digitalWrite(RELAY_PIN, LOW); relayIsOn = true; // ВКЛ
           #if defined(ARDUINO_ARCH_ESP8266)
-            EEPROM.write(0, 1); EEPROM.commit(); // Сохраняем в память
+            EEPROM.write(0, 1); EEPROM.commit(); // Запомнили в память
           #endif
-          delay(TIMEOUT_WAITING_TX); // Даем время передатчику переключиться на прием
-          MyRadio.send(ACK_FROM_RECEIVER_IF_ON); // Отправляем подтверждение "Я включился"
+          delay(TIMEOUT_WAITING_TX); // Ждем чуть-чуть, пока пульт перейдет в режим приема подтверждения
+          MyRadio.send(ACK_FROM_RECEIVER_IF_ON); // Отвечаем "Я всё сделал!"
           display_print_status("RELAY", "STATUS: ON");
           
         } else if (rxMessage == CMD_RELAY_OFF) {
-          // Команда на выключение
-          digitalWrite(RELAY_PIN, HIGH); relayIsOn = false;
+          digitalWrite(RELAY_PIN, HIGH); relayIsOn = false; // ВЫКЛ
           #if defined(ARDUINO_ARCH_ESP8266)
             EEPROM.write(0, 0); EEPROM.commit();
           #endif
           delay(TIMEOUT_WAITING_TX);
-          MyRadio.send(ACK_FROM_RECEIVER_IF_OFF); // Подтверждение "Я выключился"
+          MyRadio.send(ACK_FROM_RECEIVER_IF_OFF); // Отвечаем "Я всё сделал!"
           display_print_status("RELAY", "STATUS: OFF");
           
         } else if (rxMessage == CMD_GET_STATUS) {
-          // Запрос статуса от передатчика
+          // Если нас просто спросили "Ты как?", отвечаем текущим состоянием ножки реле
           delay(50);
-          // Отвечаем текущим состоянием пина реле
           MyRadio.send((digitalRead(RELAY_PIN) == LOW) ? ACK_RELAY_IS_ON : ACK_RELAY_IS_OFF);
         }
         
-        // После обработки возвращаемся в режим прослушивания эфира
-        MyRadio.startListening();
+        MyRadio.startListening(); // Снова переходим в режим ожидания команд
       }
     }
   #endif
 }
 
 #ifdef TRANSMITTER
-// --- ОБРАБОТКА НАЖАТИЙ (Только для пульта) ---
-
 /**
- * Одиночное нажатие — ВКЛЮЧИТЬ
+ * Обработка одного клика:
+ * Мы хотим включить реле.
  */
 void handleTap(Button2& b) {
-    if (isProcessing) return; // Если уже что-то отправляем, игнорируем нажатие
+    if (MyRadio.isProcessing) return; // Если уже идет какой-то обмен данными — игнорируем лишние нажатия
     
-    // Если мы видим, что реле выключено ИЛИ связь была потеряна — пытаемся включить
-    if (!relayIsOn || !rxOnline) {
+    // Условие: если мы ДУМАЕМ, что реле выключено, ИЛИ если у нас нет связи (надо проверить)
+    if (!MyRadio.relayIsOn || !MyRadio.rxOnline) {
         print_log("[ACTION]", "Sending ON command...");
-        if (sendCommandAndWaitAck(CMD_RELAY_ON)) {
-            relayIsOn = true;
+        // Пытаемся отправить команду и ждем ответ
+        if (MyRadio.sendCommandAndWaitAck(CMD_RELAY_ON, [](){ btn.loop(); })) {
+            MyRadio.relayIsOn = true; // Если ответ пришел (true) — значит реле точно ВКЛ
             #if defined(ARDUINO_ARCH_ESP32)
-              pref.putBool("state", true); // Запоминаем успех в память
+              pref.putBool("state", true); // Сохраняем успех в память
             #endif
-            updateDisplayStatus("SUCCESS", "Relay is ON");
+            updateDisplayStatus("[SUCCESS]: ", "RX ON");
         } else {
-            // Если подтверждение не пришло (таймаут)
-            updateDisplayStatus("ERROR", "No RX Link");
+            // Если за 2 секунды никто не ответил
+            updateDisplayStatus("[ERR]", "RX NOT ANSWER");
         }
     } else {
-        updateDisplayStatus("INFO", "Already ON"); // Реле и так включено, ничего не делаем
+        // Если мы и так знаем, что всё включено — просто пишем об этом
+        updateDisplayStatus("[INFO]", "RX ALREADY ON");
     }
 }
 
 /**
- * Двойное нажатие — ВЫКЛЮЧИТЬ
+ * Обработка двойного клика:
+ * Мы хотим выключить реле.
  */
 void handleDoubleClick(Button2& b) {
-    if (isProcessing) return;
+    if (MyRadio.isProcessing) return;
 
-    // Если реле включено ИЛИ связи нет — пробуем выключить
-    if (relayIsOn || !rxOnline) {
+    if (MyRadio.relayIsOn || !MyRadio.rxOnline) {
         print_log("[ACTION]", "Sending OFF command...");
-        if (sendCommandAndWaitAck(CMD_RELAY_OFF)) {
-            relayIsOn = false;
+        if (MyRadio.sendCommandAndWaitAck(CMD_RELAY_OFF, [](){ btn.loop(); })) {
+            MyRadio.relayIsOn = false; // Успешно выключили
             #if defined(ARDUINO_ARCH_ESP32)
-              pref.putBool("state", false);
+              pref.putBool("state", false); // Сохранили в память
             #endif
-            updateDisplayStatus("SUCCESS", "Relay is OFF");
+            updateDisplayStatus("[SUCCESS]: ", "RX OFF");
         } else {
-            updateDisplayStatus("ERROR", "No RX Link");
+            updateDisplayStatus("[ERR]", "RX NOT ANSWER");
         }
     } else {
-        updateDisplayStatus("INFO", "Already OFF");
+        updateDisplayStatus("[INFO]", "RX ALREADY OFF");
     }
 }
 
-/**
- * Ключевая функция: отправить команду и ждать подтверждения (ACK)
- */
-bool sendCommandAndWaitAck(String cmd) {
-    isProcessing = true; // Занимаем канал
-    bool ackReceived = false;
-    String response;
 
-    MyRadio.send(cmd);         // Посылаем команду в эфир
-    MyRadio.startListening();  // Сразу переходим в режим приема ответа
-
-    unsigned long startWait = millis(); // Засекаем время начала ожидания
-    // Цикл ожидания ответа (длится до наступления таймаута)
-    while (millis() - startWait < TIMEOUT_WAITING_RX) {
-        btn.loop(); // Важно: продолжаем опрашивать кнопку, чтобы она не «глючила» после цикла
-        
-        if (MyRadio.isDataReady()) {
-            if (MyRadio.receive(response) == RADIOLIB_ERR_NONE) {
-                // Если пришел ответ, проверяем — подтверждает ли он включение...
-                if (response == ACK_FROM_RECEIVER_IF_ON || response == ACK_RELAY_IS_ON) {
-                    relayIsOn = true; ackReceived = true; break;
-                }
-                // ... или выключение
-                if (response == ACK_FROM_RECEIVER_IF_OFF || response == ACK_RELAY_IS_OFF) {
-                    relayIsOn = false; ackReceived = true; break;
-                }
-            }
-        }
-    }
-
-    rxOnline = ackReceived; // Если получили ответ — значит приемник «в сети»
-    isProcessing = false;   // Освобождаем кнопку для новых команд
-    return ackReceived;     // Возвращаем результат: успешно (true) или нет (false)
-}
 #endif
