@@ -43,9 +43,11 @@
   #endif
 
   // Прототипы функций (просто оглавление для компилятора)
-  void handleTap(Button2& b); 
+  //void handleTap(Button2& b); 
+  void handleClick(Button2& b);
   void handleDoubleClick(Button2& b); 
-  bool sendCommandAndWaitAck(String cmd); 
+  bool sendCommandAndWaitAck(String cmd);
+  // int numClicks = 0;
   void updateDisplayStatus(String status, String msg); 
 #else
   // --- НАСТРОЙКИ ДЛЯ ПРИЕМНИКА (ИСПОЛНИТЕЛЯ) ---
@@ -134,12 +136,14 @@ void setup()
     #endif
     
     // Настраиваем кнопку:
-    btn.setTapHandler(handleTap);           // Один клик — ВКЛЮЧИТЬ
+    // btn.setTapHandler(handleTap);           // Один клик — ВКЛЮЧИТЬ
+    btn.setClickHandler(handleClick);         // Один клик — ВКЛЮЧИТЬ
+    btn.setLongClickHandler(handleClick); // Длинное нажатие тоже включит реле
     btn.setDoubleClickTime(700);            // Время (мс), за которое нужно успеть нажать второй раз
     btn.setDoubleClickHandler(handleDoubleClick); // Два клика — ВЫКЛЮЧИТЬ
 
     // Обновляем экран: показываем, что мы вспомнили из памяти
-    updateDisplayStatus(RADIO_NAME, MyRadio.relayIsOn ? "Last set relay was ON" : "Last set relay was OFF");
+    updateDisplayStatus(RADIO_NAME, MyRadio.relayIsOn ? "Last relay was ON" : "Last relay was OFF");
     print_log(RADIO_NAME, MyRadio.relayIsOn ? "Last set relay was ON" : "Last set relay was OFF");
   #endif
 
@@ -197,13 +201,34 @@ void loop()
   #endif
 }
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 #ifdef TRANSMITTER
 /**
  * Обработка одного клика:
  * Мы хотим включить реле.
  */
-void handleTap(Button2& b) {
+void handleClick(Button2& b) {
     if (MyRadio.isProcessing) return; // Если уже идет какой-то обмен данными — игнорируем лишние нажатия
+
+    
     
     // Условие: если мы ДУМАЕМ, что реле выключено, ИЛИ если у нас нет связи (надо проверить)
     if (!MyRadio.relayIsOn || !MyRadio.rxOnline) {
@@ -214,16 +239,22 @@ void handleTap(Button2& b) {
             #if defined(ARDUINO_ARCH_ESP32)
               pref.putBool("state", true); // Сохраняем успех в память
             #endif
-            updateDisplayStatus("[SUCCESS]: ", "RX ON");
+            updateDisplayStatus(RADIO_NAME, "RX ON");
+            print_log("[handleTap] :", "RX is ON");
         } else {
             // Если за 2 секунды никто не ответил
             updateDisplayStatus("[ERR]", "RX NOT ANSWER");
+            print_log("[handleTap] :", "No answer from RX");
         }
     } else {
-        // Если мы и так знаем, что всё включено — просто пишем об этом
-        updateDisplayStatus("[INFO]", "RX ALREADY ON");
+      updateDisplayStatus("[INFO]", "RX ALREADY ON");
+      print_log("[handleTap] :", "RX already ON");
     }
 }
+
+
+
+
 
 /**
  * Обработка двойного клика:
@@ -239,14 +270,18 @@ void handleDoubleClick(Button2& b) {
             #if defined(ARDUINO_ARCH_ESP32)
               pref.putBool("state", false); // Сохранили в память
             #endif
-            updateDisplayStatus("[SUCCESS]: ", "RX OFF");
+            updateDisplayStatus(RADIO_NAME, "RX OFF");
+            print_log("[handleDoubleClick] :", "RX is OFF");
         } else {
             updateDisplayStatus("[ERR]", "RX NOT ANSWER");
+            print_log("[handleDoubleClick] :", "No answer from RX");
         }
     } else {
         updateDisplayStatus("[INFO]", "RX ALREADY OFF");
+        print_log("[handleDoubleClick] :", "RX already OFF");
     }
 }
+
 
 
 #endif
